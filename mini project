@@ -1,0 +1,325 @@
+import pygame
+import random
+import time
+
+pygame.init()
+
+SCREEN_WIDTH = 800
+SCREEN_HEIGHT = 600
+screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+pygame.display.set_caption("Photon Dodger v2")
+
+BLACK = (0, 0, 0)
+WHITE = (255, 255, 255)
+RED = (255, 0, 0)
+BLUE = (0, 0, 255)
+YELLOW = (255, 255, 0)
+GREEN = (0, 255, 0)
+CYAN = (0, 255, 255)
+
+PLAYER_WIDTH = 50
+PLAYER_HEIGHT = 30
+player_speed_default = 7
+
+PHOTON_SIZE = 15
+
+POWERUP_SIZE = 20
+POWERUP_SPAWN_CHANCE = 0.002
+POWERUP_DURATION = 0
+
+font_small = pygame.font.Font(None, 36)
+font_medium = pygame.font.Font(None, 48)
+font_large = pygame.font.Font(None, 72)
+
+STATE_MENU = "MENU"
+STATE_PLAYING = "PLAYING"
+STATE_PAUSED = "PAUSED"
+STATE_GAME_OVER = "GAME_OVER"
+
+DIFFICULTY_LEVELS = {
+    "EASY": {
+        "initial_speed": 2,
+        "initial_spawn_interval": 70,
+        "speed_increase": 0.3,
+        "spawn_decrease": 3,
+        "min_spawn_interval": 25,
+        "score_per_level": 15
+    },
+    "MEDIUM": {
+        "initial_speed": 3,
+        "initial_spawn_interval": 60,
+        "speed_increase": 0.4,
+        "spawn_decrease": 4,
+        "min_spawn_interval": 20,
+        "score_per_level": 20
+    },
+    "HARD": {
+        "initial_speed": 4,
+        "initial_spawn_interval": 50,
+        "speed_increase": 0.5,
+        "spawn_decrease": 5,
+        "min_spawn_interval": 15,
+        "score_per_level": 25
+    }
+}
+
+game_state = STATE_MENU
+selected_difficulty_level_name = "MEDIUM"
+difficulty_settings = {}
+
+player_rect = None
+photons = []
+powerups = []
+
+score = 0
+current_level = 1
+score_to_next_level = 0
+
+current_photon_speed = 0
+current_photon_spawn_interval = 0
+photon_spawn_timer = 0
+
+start_time = 0
+paused_time_total = 0
+last_pause_start_time = 0
+
+
+def reset_game_variables():
+    global player_rect, photons, powerups, score, current_level, score_to_next_level
+    global current_photon_speed, current_photon_spawn_interval, photon_spawn_timer
+    global start_time, paused_time_total, game_state, difficulty_settings
+
+    difficulty_settings = DIFFICULTY_LEVELS[selected_difficulty_level_name]
+
+    player_x = (SCREEN_WIDTH - PLAYER_WIDTH) // 2
+    player_y = SCREEN_HEIGHT - PLAYER_HEIGHT - 20
+    player_rect = pygame.Rect(player_x, player_y, PLAYER_WIDTH, PLAYER_HEIGHT)
+
+    photons = []
+    powerups = []
+    score = 0
+    current_level = 1
+    score_to_next_level = difficulty_settings["score_per_level"]
+
+    current_photon_speed = difficulty_settings["initial_speed"]
+    current_photon_spawn_interval = difficulty_settings["initial_spawn_interval"]
+    photon_spawn_timer = 0
+
+    start_time = time.time()
+    paused_time_total = 0
+
+
+menu_options = ["EASY", "MEDIUM", "HARD"]
+selected_option_index = 1
+
+
+def draw_menu():
+    screen.fill(BLACK)
+    title_text = font_large.render("Photon Dodger v2", True, WHITE)
+    screen.blit(title_text, (SCREEN_WIDTH // 2 - title_text.get_width() // 2, SCREEN_HEIGHT // 4))
+
+    for i, option in enumerate(menu_options):
+        color = CYAN if i == selected_option_index else WHITE
+        option_text = font_medium.render(option, True, color)
+        screen.blit(option_text, (SCREEN_WIDTH // 2 - option_text.get_width() // 2, SCREEN_HEIGHT // 2 + i * 60))
+
+    instructions_text = font_small.render("Use UP/DOWN arrows and ENTER to select.", True, WHITE)
+    screen.blit(instructions_text, (SCREEN_WIDTH // 2 - instructions_text.get_width() // 2, SCREEN_HEIGHT - 100))
+    pygame.display.flip()
+
+
+def handle_menu_input(event):
+    global selected_option_index, selected_difficulty_level_name, game_state
+    if event.type == pygame.KEYDOWN:
+        if event.key == pygame.K_UP:
+            selected_option_index = (selected_option_index - 1) % len(menu_options)
+        elif event.key == pygame.K_DOWN:
+            selected_option_index = (selected_option_index + 1) % len(menu_options)
+        elif event.key == pygame.K_RETURN:
+            selected_difficulty_level_name = menu_options[selected_option_index]
+            reset_game_variables()
+            game_state = STATE_PLAYING
+        elif event.key == pygame.K_ESCAPE:
+            return False
+    return True
+
+
+def spawn_photon():
+    photon_x = random.randint(0, SCREEN_WIDTH - PHOTON_SIZE)
+    photon_y = -PHOTON_SIZE
+    photons.append(pygame.Rect(photon_x, photon_y, PHOTON_SIZE, PHOTON_SIZE))
+
+
+def update_photons():
+    global game_state
+    for photon_rect in list(photons):
+        photon_rect.y += current_photon_speed
+        if photon_rect.y > SCREEN_HEIGHT:
+            photons.remove(photon_rect)
+        elif player_rect and player_rect.colliderect(photon_rect):
+            game_state = STATE_GAME_OVER
+
+
+def spawn_powerup():
+    powerup_x = random.randint(0, SCREEN_WIDTH - POWERUP_SIZE)
+    powerup_y = -POWERUP_SIZE
+    powerups.append(pygame.Rect(powerup_x, powerup_y, POWERUP_SIZE, POWERUP_SIZE))
+
+
+def update_powerups():
+    global score
+    for pu_rect in list(powerups):
+        pu_rect.y += current_photon_speed * 0.7
+        if pu_rect.y > SCREEN_HEIGHT:
+            powerups.remove(pu_rect)
+        elif player_rect and player_rect.colliderect(pu_rect):
+            activate_powerup_effect()
+            powerups.remove(pu_rect)
+
+
+def activate_powerup_effect():
+    photons.clear()
+
+
+def check_level_up():
+    global score, current_level, score_to_next_level
+    global current_photon_speed, current_photon_spawn_interval
+
+    if score >= score_to_next_level:
+        current_level += 1
+        score_to_next_level += difficulty_settings["score_per_level"] * current_level
+
+        current_photon_speed += difficulty_settings["speed_increase"]
+        current_photon_spawn_interval = max(
+            difficulty_settings["min_spawn_interval"],
+            current_photon_spawn_interval - difficulty_settings["spawn_decrease"]
+        )
+
+
+def draw_playing_elements():
+    screen.fill(BLACK)
+
+    if player_rect:
+        pygame.draw.polygon(screen, BLUE, [
+            (player_rect.left, player_rect.bottom),
+            (player_rect.centerx, player_rect.top),
+            (player_rect.right, player_rect.bottom)
+        ])
+
+    for photon_rect in photons:
+        pygame.draw.ellipse(screen, YELLOW, photon_rect)
+
+    for pu_rect in powerups:
+        pygame.draw.rect(screen, GREEN, pu_rect)
+
+    score_text = font_small.render(f"Score: {int(score)}", True, WHITE)
+    level_text = font_small.render(f"Level: {current_level}", True, WHITE)
+    difficulty_text = font_small.render(f"Difficulty: {selected_difficulty_level_name}", True, WHITE)
+
+    screen.blit(score_text, (10, 10))
+    screen.blit(level_text, (10, 40))
+    screen.blit(difficulty_text, (SCREEN_WIDTH - difficulty_text.get_width() - 10, 10))
+
+
+def draw_game_over_screen():
+    screen.fill(BLACK)
+    game_over_text = font_large.render("GAME OVER", True, RED)
+    final_score_text = font_medium.render(f"Final Score: {int(score)}", True, WHITE)
+    final_level_text = font_medium.render(f"Reached Level: {current_level}", True, WHITE)
+    restart_text = font_small.render("Press 'R' to Restart (Menu) or 'Q' to Quit", True, WHITE)
+
+    screen.blit(game_over_text, (SCREEN_WIDTH // 2 - game_over_text.get_width() // 2, SCREEN_HEIGHT // 3))
+    screen.blit(final_score_text, (SCREEN_WIDTH // 2 - final_score_text.get_width() // 2, SCREEN_HEIGHT // 2 - 30))
+    screen.blit(final_level_text, (SCREEN_WIDTH // 2 - final_level_text.get_width() // 2, SCREEN_HEIGHT // 2 + 10))
+    screen.blit(restart_text, (SCREEN_WIDTH // 2 - restart_text.get_width() // 2, SCREEN_HEIGHT * 2 / 3))
+    pygame.display.flip()
+
+
+def draw_pause_screen():
+    draw_playing_elements()
+
+    s = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+    s.fill((0, 0, 0, 180))
+    screen.blit(s, (0, 0))
+
+    pause_text = font_large.render("PAUSED", True, WHITE)
+    resume_text = font_small.render("Press 'P' to Resume or 'M' for Menu", True, WHITE)
+    screen.blit(pause_text, (SCREEN_WIDTH // 2 - pause_text.get_width() // 2, SCREEN_HEIGHT // 3))
+    screen.blit(resume_text, (SCREEN_WIDTH // 2 - resume_text.get_width() // 2, SCREEN_HEIGHT // 2))
+    pygame.display.flip()
+
+
+clock = pygame.time.Clock()
+running = True
+
+while running:
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+
+        if game_state == STATE_MENU:
+            if not handle_menu_input(event):
+                running = False
+
+        elif game_state == STATE_PLAYING:
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_p:
+                    game_state = STATE_PAUSED
+                    last_pause_start_time = time.time()
+                elif event.key == pygame.K_ESCAPE:
+                    game_state = STATE_PAUSED
+                    last_pause_start_time = time.time()
+
+        elif game_state == STATE_PAUSED:
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_p:
+                    game_state = STATE_PLAYING
+                    paused_time_total += time.time() - last_pause_start_time
+                elif event.key == pygame.K_m:
+                    game_state = STATE_MENU
+                elif event.key == pygame.K_ESCAPE:
+                    running = False
+
+        elif game_state == STATE_GAME_OVER:
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_r:
+                    game_state = STATE_MENU
+                elif event.key == pygame.K_q or event.key == pygame.K_ESCAPE:
+                    running = False
+
+    if game_state == STATE_PLAYING:
+        keys = pygame.key.get_pressed()
+        if player_rect:
+            if keys[pygame.K_LEFT] and player_rect.left > 0:
+                player_rect.x -= player_speed_default
+            if keys[pygame.K_RIGHT] and player_rect.right < SCREEN_WIDTH:
+                player_rect.x += player_speed_default
+
+        score = (time.time() - start_time) - paused_time_total
+
+        check_level_up()
+
+        photon_spawn_timer += 1
+        if photon_spawn_timer >= current_photon_spawn_interval:
+            spawn_photon()
+            photon_spawn_timer = 0
+
+        update_photons()
+
+        if random.random() < POWERUP_SPAWN_CHANCE:
+            spawn_powerup()
+        update_powerups()
+
+    if game_state == STATE_MENU:
+        draw_menu()
+    elif game_state == STATE_PLAYING:
+        draw_playing_elements()
+        pygame.display.flip()
+    elif game_state == STATE_PAUSED:
+        draw_pause_screen()
+    elif game_state == STATE_GAME_OVER:
+        draw_game_over_screen()
+
+    clock.tick(60)
+
+pygame.quit()
